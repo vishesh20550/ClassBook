@@ -1,0 +1,266 @@
+package com.example.classbook
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Bundle
+import android.media.AudioManager
+import android.util.Log
+import android.widget.Button
+import android.widget.TextView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import com.google.firebase.storage.FirebaseStorage
+import java.io.BufferedReader
+import java.io.File
+import java.io.FileReader
+import org.vosk.Model
+import org.vosk.Recognizer
+import org.vosk.android.RecognitionListener
+import java.io.IOException
+import org.vosk.android.SpeechService
+import org.vosk.android.StorageService
+
+class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
+
+    private lateinit var scriptTextView: TextView
+    private lateinit var startButton: Button
+    private lateinit var resetButton: Button
+    private lateinit var stopButton: Button
+    private lateinit var refreshButton: Button // Added Refresh Button
+    private lateinit var classId: String
+    private lateinit var scriptId: String
+    private var isListening = false
+    private var currentWordIndex = 0
+    private var isScriptComplete = false
+    private var script: String = ""
+    private lateinit var audioManager: AudioManager
+    private var speechService: SpeechService? = null
+    private var model: Model? = null
+    private var recognizer: Recognizer? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Set your layout file
+        setContentView(R.layout.activity_class_details)
+
+        // Retrieve classId and scriptId from the intent
+        classId = intent.getStringExtra("classId") ?: ""
+        scriptId = intent.getStringExtra("scriptId") ?: ""
+
+        scriptTextView = findViewById(R.id.scriptTextView)
+        resetButton = findViewById(R.id.resetButton)
+        startButton = findViewById(R.id.startButton)
+        stopButton = findViewById(R.id.stopButton)
+        refreshButton = findViewById(R.id.refreshButton) // Initialize Refresh Button
+
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+        // Fetch the script using scriptId
+        fetchScriptFromFirebase(scriptId)
+
+        // Set up the refresh functionality
+        refreshButton.setOnClickListener {
+            fetchScriptFromFirebase(scriptId)
+        }
+
+        checkAudioPermission()
+
+        // Disable buttons until script is loaded
+        startButton.isEnabled = false
+        stopButton.isEnabled = false
+        resetButton.isEnabled = false
+
+        // Set up button click listeners
+        startButton.setOnClickListener {
+            if (!isListening && script.isNotEmpty()) {
+                startListening()
+            } else if (script.isEmpty()) {
+                Toast.makeText(this, "Script not loaded yet. Please refresh.", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        stopButton.setOnClickListener {
+            if (isListening) {
+                stopListening()
+            }
+        }
+
+        resetButton.setOnClickListener {
+            if (script.isNotEmpty()) {
+                resetTeleprompter()
+            } else {
+                Toast.makeText(this, "Script not loaded yet. Please refresh.", Toast.LENGTH_SHORT).show()
+            }
+        }
+        loadModel()
+    }
+
+    private fun fetchScriptFromFirebase(scriptId: String) {
+        val storageRef = FirebaseStorage.getInstance().reference.child("class_scripts/$scriptId.txt")
+        val localFile = File.createTempFile("script", "txt")
+
+        storageRef.getFile(localFile).addOnSuccessListener {
+            // Successfully downloaded the file
+            loadScriptFromFile(localFile)
+
+        }.addOnFailureListener {
+            Toast.makeText(this, "Failed to fetch script. Please refresh.", Toast.LENGTH_SHORT).show()
+            // Keep buttons disabled
+            startButton.isEnabled = false
+            resetButton.isEnabled = false
+            stopButton.isEnabled=false
+            refreshButton.isEnabled=true
+        }
+    }
+
+    private fun loadScriptFromFile(file: File) {
+        try {
+            val bufferedReader = BufferedReader(FileReader(file))
+            val stringBuilder = StringBuilder()
+            var line: String?
+
+            while (bufferedReader.readLine().also { line = it } != null) {
+                stringBuilder.append(line).append("\n")
+            }
+            bufferedReader.close()
+
+            script = stringBuilder.toString()
+            scriptTextView.text = script
+            refreshButton.isEnabled=false
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Toast.makeText(this, "Failed to load script", Toast.LENGTH_SHORT).show()
+            startButton.isEnabled = false
+            resetButton.isEnabled = false
+            stopButton.isEnabled=false
+            refreshButton.isEnabled=true
+        }
+    }
+
+    private fun loadModel() {
+        StorageService.unpack(this, "vosk-model-small-en-in-0.4", "model",
+            { model: Model ->
+                this.model = model
+                Log.i("VoskModel", "Model loaded successfully")
+                setupRecognizer(model)
+                // Enable the start button
+                startButton.isEnabled = true
+                stopButton.isEnabled=false
+                resetButton.isEnabled = true
+            },
+            { exception: IOException ->
+                Log.e("VoskModel", "Failed to unpack the model", exception)
+                Toast.makeText(this, "Failed to load model", Toast.LENGTH_LONG).show()
+                startButton.isEnabled = false
+                resetButton.isEnabled = false
+                stopButton.isEnabled=false
+            })
+    }
+    private fun setupRecognizer(model: Model) {
+        recognizer = Recognizer(model, 16000.0f)
+    }
+
+    private fun resetTeleprompter() {
+        currentWordIndex = 0
+        isScriptComplete = false
+        scriptTextView.text = script
+        stopListening()
+        startListening()
+    }
+
+    private fun startListening() {
+        if (recognizer == null) {
+            Toast.makeText(this, "Model not loaded yet", Toast.LENGTH_SHORT).show()
+            return
+        }
+        startButton.isEnabled = false
+        stopButton.isEnabled = true
+        resetButton.isEnabled = true
+        isListening = true
+        speechService = SpeechService(recognizer, 16000.0f)
+        speechService?.startListening(this)
+    }
+
+    private fun stopListening() {
+        startButton.isEnabled = true
+        stopButton.isEnabled = false
+        resetButton.isEnabled = true
+        isListening = false
+        speechService?.stop()
+    }
+
+    private fun updateHighlightedText(spokenText: String) {
+        Log.d("SpokenText", spokenText)
+        val visibleScriptWords = script.split(" ")
+        val wordsInScript = script.split(Regex("\\W+"))
+        val spokenWords = spokenText.split(Regex("\\W+"))
+        for (spokenWord in spokenWords) {
+            if (currentWordIndex < wordsInScript.size && wordsInScript[currentWordIndex].equals(spokenWord, ignoreCase = true)) {
+                currentWordIndex++
+            }
+            if (currentWordIndex >= wordsInScript.size && !isScriptComplete) {
+                stopListening()
+                isScriptComplete = true
+                Toast.makeText(this, "Script Complete", Toast.LENGTH_SHORT).show()
+            }
+        }
+        val highlightedText = visibleScriptWords.mapIndexed { index, word ->
+            if (index < currentWordIndex) {
+                "<font color='#FF0000'>$word</font>"
+            } else {
+                word
+            }
+        }.joinToString(" ")
+        scriptTextView.text = android.text.Html.fromHtml(highlightedText, android.text.Html.FROM_HTML_MODE_LEGACY)
+    }
+
+    private fun checkAudioPermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1)
+        }
+    }
+
+    override fun onPartialResult(hypothesis: String?) {
+        updateHighlightedText(hypothesis ?: "")
+    }
+
+    override fun onResult(hypothesis: String?) {
+        updateHighlightedText(hypothesis ?: "")
+    }
+
+    override fun onFinalResult(hypothesis: String?) {
+        updateHighlightedText(hypothesis ?: "")
+        stopListening()
+    }
+
+    override fun onError(e: Exception?) {
+        Log.e("VoskError", "Error during recognition", e)
+    }
+
+    override fun onTimeout() {
+        stopListening()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1) {
+            if ((grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
+//                Toast.makeText(this, "Please Wait!!",Toast.LENGTH_SHORT).show()
+            } else {
+                // Permission denied
+                Toast.makeText(this, "Microphone permission is required for this app", Toast.LENGTH_SHORT).show()
+                checkAudioPermission()
+            }
+        }
+    }
+
+
+    override fun onDestroy() {
+        super.onDestroy()
+        speechService?.shutdown()
+    }
+}
