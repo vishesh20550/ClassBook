@@ -29,7 +29,8 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
     private lateinit var startButton: Button
     private lateinit var resetButton: Button
     private lateinit var stopButton: Button
-    private lateinit var refreshButton: Button // Added Refresh Button
+    private lateinit var refreshButton: Button
+    private lateinit var skipButton: Button
     private lateinit var classId: String
     private lateinit var scriptId: String
     private var isListening = false
@@ -40,6 +41,8 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
     private var speechService: SpeechService? = null
     private var model: Model? = null
     private var recognizer: Recognizer? = null
+    private lateinit var wordsInScript : List<String>
+    private lateinit var  visibleScriptWords : List<String>
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,7 +57,8 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
         resetButton = findViewById(R.id.resetButton)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)
-        refreshButton = findViewById(R.id.refreshButton) // Initialize Refresh Button
+        refreshButton = findViewById(R.id.refreshButton)
+        skipButton = findViewById(R.id.skipButton)
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -72,6 +76,7 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
         startButton.isEnabled = false
         stopButton.isEnabled = false
         resetButton.isEnabled = false
+        skipButton.isEnabled =false;
 
         // Set up button click listeners
         startButton.setOnClickListener {
@@ -79,6 +84,16 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
                 startListening()
             } else if (script.isEmpty()) {
                 Toast.makeText(this, "Script not loaded yet. Please refresh.", Toast.LENGTH_SHORT).show()
+            }
+        }
+        skipButton.setOnClickListener {
+            if(!isScriptComplete){
+                currentWordIndex++
+                if (currentWordIndex >= wordsInScript.size) {
+                    stopListening()
+                    isScriptComplete = true
+                    Toast.makeText(this, "Script Complete", Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
@@ -112,6 +127,7 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
             startButton.isEnabled = false
             resetButton.isEnabled = false
             stopButton.isEnabled=false
+            skipButton.isEnabled =false
             refreshButton.isEnabled=true
         }
     }
@@ -129,6 +145,8 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
 
             script = stringBuilder.toString()
             scriptTextView.text = script
+            visibleScriptWords = script.split(" ")
+            wordsInScript = script.split(Regex("\\W+"))
             refreshButton.isEnabled=false
         } catch (e: Exception) {
             e.printStackTrace()
@@ -136,6 +154,7 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
             startButton.isEnabled = false
             resetButton.isEnabled = false
             stopButton.isEnabled=false
+            skipButton.isEnabled =false
             refreshButton.isEnabled=true
         }
     }
@@ -150,6 +169,7 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
                 startButton.isEnabled = true
                 stopButton.isEnabled=false
                 resetButton.isEnabled = true
+                skipButton.isEnabled=false
             },
             { exception: IOException ->
                 Log.e("VoskModel", "Failed to unpack the model", exception)
@@ -157,6 +177,7 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
                 startButton.isEnabled = false
                 resetButton.isEnabled = false
                 stopButton.isEnabled=false
+                skipButton.isEnabled=false
             })
     }
     private fun setupRecognizer(model: Model) {
@@ -177,6 +198,7 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
             return
         }
         startButton.isEnabled = false
+        skipButton.isEnabled=true;
         stopButton.isEnabled = true
         resetButton.isEnabled = true
         isListening = true
@@ -187,6 +209,7 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
     private fun stopListening() {
         startButton.isEnabled = true
         stopButton.isEnabled = false
+        skipButton.isEnabled=false;
         resetButton.isEnabled = true
         isListening = false
         speechService?.stop()
@@ -194,8 +217,6 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
 
     private fun updateHighlightedText(spokenText: String) {
         Log.d("SpokenText", spokenText)
-        val visibleScriptWords = script.split(" ")
-        val wordsInScript = script.split(Regex("\\W+"))
         val spokenWords = spokenText.split(Regex("\\W+"))
         for (spokenWord in spokenWords) {
             if (currentWordIndex < wordsInScript.size && wordsInScript[currentWordIndex].equals(spokenWord, ignoreCase = true)) {
@@ -204,6 +225,7 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
             if (currentWordIndex >= wordsInScript.size && !isScriptComplete) {
                 stopListening()
                 isScriptComplete = true
+                skipButton.isEnabled=false;
                 Toast.makeText(this, "Script Complete", Toast.LENGTH_SHORT).show()
             }
         }
