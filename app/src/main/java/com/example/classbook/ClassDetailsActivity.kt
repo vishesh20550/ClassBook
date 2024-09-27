@@ -13,6 +13,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.firebase.storage.FirebaseStorage
+import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileReader
@@ -89,6 +90,7 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
         skipButton.setOnClickListener {
             if(!isScriptComplete){
                 currentWordIndex++
+                updateHighlightedText("")
                 if (currentWordIndex >= wordsInScript.size) {
                     stopListening()
                     isScriptComplete = true
@@ -247,16 +249,52 @@ class ClassDetailsActivity : AppCompatActivity(), RecognitionListener{
     }
 
     override fun onPartialResult(hypothesis: String?) {
-        updateHighlightedText(hypothesis ?: "")
+        if (!hypothesis.isNullOrEmpty()) {
+            try {
+                // Parse the hypothesis as a JSON object
+                val jsonObject = JSONObject(hypothesis)
+                // Extract the 'partial' value if it exists
+                val partial = jsonObject.optString("partial")
+                if (partial.isNotEmpty()) {
+                    updateHighlightedText(partial)
+                }
+            } catch (e: Exception) {
+                Log.e("VoskPartialResultError", "Error parsing partial result", e)
+            }
+        }
     }
 
     override fun onResult(hypothesis: String?) {
-        updateHighlightedText(hypothesis ?: "")
+        if (!hypothesis.isNullOrEmpty()) {
+            try {
+                // Parse the hypothesis as a JSON object
+                val jsonObject = JSONObject(hypothesis)
+                // Extract the 'text' value if it exists
+                val text = jsonObject.optString("text")
+                if (text.isNotEmpty()) {
+                    updateHighlightedText(text)
+                }
+            } catch (e: Exception) {
+                Log.e("VoskResultError", "Error parsing result", e)
+            }
+        }
     }
 
     override fun onFinalResult(hypothesis: String?) {
-        updateHighlightedText(hypothesis ?: "")
-        stopListening()
+        if (!hypothesis.isNullOrEmpty()) {
+            try {
+                // Parse the hypothesis as a JSON object
+                val jsonObject = JSONObject(hypothesis)
+                // Extract the 'text' value if it exists
+                val text = jsonObject.optString("text")
+                if (text.isNotEmpty()) {
+                    updateHighlightedText(text)
+                }
+            } catch (e: Exception) {
+                Log.e("VoskFinalResultError", "Error parsing final result", e)
+            }
+            stopListening()
+        }
     }
 
     override fun onError(e: Exception?) {
